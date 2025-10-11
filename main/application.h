@@ -84,12 +84,17 @@ private:
     int clock_ticks_ = 0;
     TaskHandle_t check_new_version_task_handle_ = nullptr;
     TaskHandle_t main_event_loop_task_handle_ = nullptr;
+    
+    // Text buffer for TTS responses to avoid word splitting
+    std::string tts_text_buffer_;
+    std::string last_complete_word_;
 
     void OnWakeWordDetected();
     void CheckNewVersion(Ota& ota);
     void CheckAssetsVersion();
     void ShowActivationCode(const std::string& code, const std::string& message);
     void SetListeningMode(ListeningMode mode);
+    void ProcessTtsTextChunk(const char* text_chunk, Display* display);
 };
 
 

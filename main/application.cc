@@ -16,6 +16,8 @@
 #include <driver/gpio.h>
 #include <arpa/inet.h>
 #include <font_awesome.h>
+#include <sstream>
+#include <algorithm>
 
 #define TAG "Application"
 
@@ -464,10 +466,7 @@ void Application::Start() {
             } else if (strcmp(state->valuestring, "sentence_start") == 0) {
                 auto text = cJSON_GetObjectItem(root, "text");
                 if (cJSON_IsString(text)) {
-                    ESP_LOGI(TAG, "<< %s", text->valuestring);
-                    Schedule([this, display, message = std::string(text->valuestring)]() {
-                        display->SetChatMessage("assistant", message.c_str());
-                    });
+                    ProcessTtsTextChunk(text->valuestring, display);
                 }
             }
         } else if (strcmp(type->valuestring, "stt") == 0) {
@@ -869,4 +868,56 @@ void Application::SetAecMode(AecMode mode) {
 
 void Application::PlaySound(const std::string_view& sound) {
     audio_service_.PlaySound(sound);
+}
+
+void Application::ProcessTtsTextChunk(const char* text_chunk, Display* display) {
+    std::string chunk(text_chunk);
+    
+    // Log the incoming chunk
+    ESP_LOGI(TAG, "Received TTS chunk: \"%s\"", chunk.c_str());
+    
+    // Add the new chunk to the buffer
+    tts_text_buffer_ += chunk;
+    ESP_LOGI(TAG, "Current buffer after adding: \"%s\"", tts_text_buffer_.c_str());
+    
+    // Find the last word boundary (space, punctuation, or end of text)
+    size_t last_boundary = std::string::npos;
+    
+    // Look for word boundaries (spaces, punctuation marks)
+    const std::string boundaries = " .,!?;:()[]{}";
+    for (size_t i = tts_text_buffer_.length(); i > 0; --i) {
+        if (boundaries.find(tts_text_buffer_[i-1]) != std::string::npos) {
+            last_boundary = i;
+            break;
+        }
+    }
+    
+    // If we found a boundary, output everything up to that boundary
+    if (last_boundary != std::string::npos && last_boundary > 0) {
+        std::string complete_text = tts_text_buffer_.substr(0, last_boundary);
+        std::string remaining_text = tts_text_buffer_.substr(last_boundary);
+        
+        // Log and display the complete text
+        ESP_LOGI(TAG, "Outputting complete text: \"%s\"", complete_text.c_str());
+        ESP_LOGI(TAG, "Keeping in buffer: \"%s\"", remaining_text.c_str());
+        
+        Schedule([this, display, message = complete_text]() {
+            display->SetChatMessage("assistant", message.c_str());
+        });
+        
+        // Keep the remaining text in the buffer
+        tts_text_buffer_ = remaining_text;
+    } else {
+        // No boundary found, keep everything in buffer for next chunk
+        ESP_LOGI(TAG, "No boundary found, buffering entire chunk. Current buffer: \"%s\"", tts_text_buffer_.c_str());
+    }
+    
+    // If the buffer is getting too large (safety measure), output it anyway
+    if (tts_text_buffer_.length() > 1000) {
+        ESP_LOGW(TAG, "TTS buffer too large, forcing output: \"%s\"", tts_text_buffer_.c_str());
+        Schedule([this, display, message = tts_text_buffer_]() {
+            display->SetChatMessage("assistant", message.c_str());
+        });
+        tts_text_buffer_.clear();
+    }
 }
